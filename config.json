@@ -1,0 +1,30 @@
+{
+    "targetUser":"dailyoriginalmusic",
+    "accountInteractionInterval":5,
+    "reelInteractionInterval":1,
+    "individualInteractionInterval":1,
+    "realWatchDuration":3,
+    "like":false,
+    "likeRangeMinimum":10,
+    "likeRangeMaximum":10,
+    "share":true,
+    "shareRangeMinimum":10,
+    "shareRangeMaximum":10,
+    "comment":false,
+    "commentRangeMinimum":10,
+    "commentRangeMaximum":10,
+    "search":true,
+    "maxNumberOfReelsToWatch":1,
+    "specificReelIDsToWatch": [],
+    "usersToShareTo":[],
+    "useProxy":false,
+    "proxies":[
+
+    ],
+    "accounts":[
+        {
+            "username":"",
+            "password":""
+        }
+    ]
+}
