@@ -1,1 +1,4 @@
 selenium
+requests
+requests[socks]
+pysocks

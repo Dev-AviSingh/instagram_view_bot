@@ -21,6 +21,9 @@ from os.path import exists
 import os
 from datetime import datetime
 from subprocess import check_output
+import configparser
+from pprint import pprint
+from ast import literal_eval
 
 '''
 {
@@ -55,7 +58,7 @@ from subprocess import check_output
 class Account(TypedDict):
     username:str
     password:str
-
+    proxy:str
 class Config(TypedDict):
     targetUser:str
     interactionInterval:int
@@ -82,13 +85,35 @@ class Config(TypedDict):
 LOG_FILE = "logs.txt"
 COMMENTS_FILE = "comments.txt"
 SHARE_MESSAGES_FILE = "shareMessages.txt"
+CONFIGURATION_FILE = "config.ini"
+PROXIES_FILE = "proxies.txt"
+USERS_TO_SHARE_TO_FILE = "shareUsersList.txt"
+ACCOUNT_CREDENTIALS_FILE = "accountLogins.txt"
+# Proxies with this particular protocol
+HTTP_PROXIES_FILE = "httpProxies.txt" 
+SOCKS4_PROXIES_FILE = "socks4Proxies.txt"
+SOCKS5_PROXIES_FILE = "socks5Proxies.txt" 
 
+FIXED_PROXIES_FILE = "fixedProxies.json" # Accounts with their associated proxies fixed for them already.
 
 GECKODRIVER_WINDOWS_LINK = "https://github.com/mozilla/geckodriver/releases/download/v0.34.0/geckodriver-v0.34.0-win32.zip"
 GECKODRIVER_LINUX_LINK = "https://github.com/mozilla/geckodriver/releases/download/v0.34.0/geckodriver-v0.34.0-linux64.tar.gz"
 
 GECKODRIVER_LOCATION = "driver\\geckodriver.exe"
 FIREFOX_BINARY_LOCATION = "firefox\\firefox.exe"
+
+
+
+# If any of the configuration files do not exist. Create them.
+localVariables = list(locals().items())
+for var, val in localVariables:
+    if "_FILE" in var:
+        if os.path.exists(val):
+            pass
+        else:
+            print(f"File does not exist: {val}")
+            with open(val, "w") as f:
+                pass
 
 
 def log(printAsWell, msg):
@@ -110,6 +135,7 @@ class ViewBot:
         self.verbose = verbose
         self.username, self.password = username, password
         self.standardWait = 10
+        self.config:Config = config
 
         if verbose:
             log(self.verbose, config)    
@@ -122,14 +148,14 @@ class ViewBot:
         self.navigatedToUser = False
         self.currentReelID = None
 
+        log(self.verbose, f"Started bot for account {username} with password {password}.")
         driver.get(self.instaBaseURL)
     
 
     def login(self) -> bool:
         try:
-
-            if self.verbose:
-                log(self.verbose, "Sending password details.")
+            log(self.verbose, "Sending password details.")
+            
             # Find and fill the username field
             username_field = WebDriverWait(self.driver, self.standardWait).until(
                 EC.presence_of_element_located((By.NAME, "username"))
@@ -143,8 +169,7 @@ class ViewBot:
             # Submit the login form
             password_field.send_keys(Keys.RETURN)
 
-            if self.verbose:
-                log(self.verbose, "Login details sent. Waiting for login")
+            log(self.verbose, "Login details sent. Waiting for login")
             
             
             # Wait until the main page loads by checking for an element that appears on the main page
@@ -159,8 +184,7 @@ class ViewBot:
                 except Exception as e:
                     log(self.verbose, str(e))
                     return False
-            if self.verbose:
-                log(self.verbose, "Login successful")
+            log(self.verbose, "Login successful")
 
             notNowButton = self.driver.find_element(By.XPATH, MainPage["saveLoginNotNowButton"])
             notNowButton.click()
@@ -171,11 +195,9 @@ class ViewBot:
                     EC.presence_of_element_located((By.XPATH, MainPage["notificationNotNowButton"]))
                 )
             except NoSuchElementException:
-                if self.verbose:
-                    log(self.verbose, "Did not get notification message")
+                log(self.verbose, "Did not get notification message")
         
-            if self.verbose:
-                log(self.verbose, "Login successful. Passed notifications alert.")
+            log(self.verbose, "Login successful. Passed notifications alert.")
 
             notNowButton = self.driver.find_element(By.XPATH, MainPage["notificationNotNowButton"])
             notNowButton.click()
@@ -185,14 +207,12 @@ class ViewBot:
             return True
 
         except Exception as e:
-            if self.verbose:
-                log(self.verbose, f"An error occurred during login: {e}")
+            log(self.verbose, f"An error occurred during login: {e}")
             return False
 
     def searchAndNavigateToTargetUser(self) -> bool:
         try:
-            if self.verbose:
-                log(self.verbose, "Starting search")
+            log(self.verbose, "Starting search")
             # Click the search button
             search_button = WebDriverWait(self.driver, self.standardWait).until(
                 EC.presence_of_element_located((By.XPATH, MainPage["searchButton"]))
@@ -203,11 +223,11 @@ class ViewBot:
             search_bar = WebDriverWait(self.driver, self.standardWait).until(
                 EC.presence_of_element_located((By.XPATH, MainPage["searchBar"]))
             )
-            search_bar.send_keys(config["targetUser"])
+            search_bar.send_keys(self.config["targetUser"])
             search_bar.send_keys(Keys.RETURN)
 
 
-            if self.verbose: log(self.verbose, "Waiting for search results.")
+            log(self.verbose, "Waiting for search results.")
             # Wait for search results to load
             WebDriverWait(self.driver, self.standardWait).until(
                 EC.presence_of_element_located((By.XPATH, MainPage["searchedUsersContainer"]))
@@ -215,25 +235,23 @@ class ViewBot:
 
             search_container = self.driver.find_element(By.XPATH, MainPage["searchedUsersContainer"])
             
-            if self.verbose: log(self.verbose, "Waiting for target's search result.")
+            log(self.verbose, "Waiting for target's search result.")
             WebDriverWait(self.driver, 20).until(
                 EC.presence_of_element_located((By.XPATH, MainPage["firstSearchResult"]))
             )
             
-            if self.verbose:
-                log(self.verbose, "Going to user profile page")
+            log(self.verbose, "Going to user profile page")
 
             
             try:
                 user_profile_search_result = search_container.find_element(By.XPATH, MainPage["firstSearchResult"])
                 
-                if self.verbose:
-                    log(self.verbose, f"Search for '{config['targetUser']}' completed successfully")
+                log(self.verbose, f"Search for '{self.config['targetUser']}' completed successfully")
                 
                 user_profile_search_result.click()
             except StaleElementReferenceException as e:
                 log(self.verbose, "Stale element reference to first search result. Directly switching to reels page.")
-                self.driver.get(f"{self.instaBaseURL}{config['targetUser']}")
+                self.driver.get(f"{self.instaBaseURL}{self.config['targetUser']}")
             
             try:
                 WebDriverWait(self.driver, self.standardWait).until(
@@ -241,22 +259,20 @@ class ViewBot:
                 )
             except NoSuchElementException as e:
                 log(self.verbose, "Did not find username.")
-            if self.verbose:
-                log(self.verbose, f"Navigated to target user {config['targetUser']} profile page.")
+            log(self.verbose, f"Navigated to target user {self.config['targetUser']} profile page.")
 
             self.navigatedToUser = True
 
             return True
 
         except Exception as e:
-            if self.verbose:
-                log(self.verbose, f"An error occurred during search: {e}")
+            log(self.verbose, f"An error occurred during search: {e}")
             return False
 
     def listReels(self) -> list[str]:
         '''Return the reel elements'''
         elements = []
-        self.driver.get(self.instaBaseURL + config["targetUser"] + "/reels/")
+        self.driver.get(self.instaBaseURL + self.config["targetUser"] + "/reels/")
 
         try:
             log(self.verbose, "Checking for the reelsPageButton.")
@@ -280,7 +296,7 @@ class ViewBot:
         log(self.verbose, "Found reels parent container.")
 
         last_height = self.driver.execute_script("return document.body.scrollHeight")
-        while len(elements) <= config["maxNumberOfReelsToWatch"]:
+        while len(elements) <= self.config["maxNumberOfReelsToWatch"]:
             self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
             time.sleep(2)
             new_height = self.driver.execute_script("return document.body.scrollHeight")
@@ -329,14 +345,14 @@ class ViewBot:
     def randomlyInteractWithReels(self):
         shuffle(self.foundReels)
 
-        for customReelID in config["specificReelIDsToWatch"]:
+        for customReelID in self.config["specificReelIDsToWatch"]:
             if not any([customReelID in link for link in self.foundReels]):
                 self.foundReels.append(f"{self.instaBaseURL}reel/{customReelID}/")
                 self.foundReels.pop(0)
 
-        likeCount = randint(config["likeRangeMinimum"], config["likeRangeMinimum"])
-        commentCount = randint(config["commentRangeMinimum"], config["commentRangeMinimum"])
-        shareCount = randint(config["shareRangeMinimum"], config["shareRangeMaximum"])
+        likeCount = randint(self.config["likeRangeMinimum"], self.config["likeRangeMinimum"])
+        commentCount = randint(self.config["commentRangeMinimum"], self.config["commentRangeMinimum"])
+        shareCount = randint(self.config["shareRangeMinimum"], self.config["shareRangeMaximum"])
 
         likeOrNot = [1 for _ in range(0, likeCount)] + [0 for _ in range(0, len(self.foundReels) - likeCount)]
         commentOrNot = [1 for _ in range(0, likeCount)] + [1 for _ in range(0, len(self.foundReels) - commentCount)]
@@ -348,7 +364,7 @@ class ViewBot:
 
         for i, reelLink in enumerate(self.foundReels):
             self.driver.get(reelLink)
-            self.driver.implicitly_wait(config["realWatchDuration"])
+            self.driver.implicitly_wait(self.config["realWatchDuration"])
 
             self.currentReelID = reelLink
 
@@ -366,19 +382,19 @@ class ViewBot:
                 continue
 
             
-            if config["like"] and likeOrNot[i] == 1:
-                self.driver.implicitly_wait(config["individualInteractionInterval"])
+            if self.config["like"] and likeOrNot[i] == 1:
+                self.driver.implicitly_wait(self.config["individualInteractionInterval"])
                 self.likeReel()
             
-            if config["comment"] and commentOrNot[i] == 1:
-                self.driver.implicitly_wait(config["individualInteractionInterval"])
+            if self.config["comment"] and commentOrNot[i] == 1:
+                self.driver.implicitly_wait(self.config["individualInteractionInterval"])
                 self.commentOnReel(self.generateRandomComment())
 
-            if config["share"] and shareOrNot[i] == 1:
-                self.driver.implicitly_wait(config["individualInteractionInterval"])
-                self.shareReel(config["usersToShareTo"])
+            if self.config["share"] and shareOrNot[i] == 1:
+                self.driver.implicitly_wait(self.config["individualInteractionInterval"])
+                self.shareReel(self.config["usersToShareTo"])
             
-            self.driver.implicitly_wait(config["reelInteractionInterval"])
+            self.driver.implicitly_wait(self.config["reelInteractionInterval"])
 
             
 
@@ -526,24 +542,11 @@ def getDriver(executablePath, firefoxPath, proxy = None, headless = False):
     return driver
 
 def getFreeProxies():
-    proxies = rq.get("https://api.proxyscrape.com/v3/free-proxy-list/get?request=displayproxies&proxy_format=ipport&format=text&country=in&timeout=1000").text.split("\r\n")
+    proxies = rq.get("https://api.proxyscrape.com/v3/free-proxy-list/get?request=displayproxies&proxy_format=ipport&format=text&country=in&timeout=1000&protocol=http").text.split("\r\n")
 
     proxies = [p for p in proxies if p != ""]
     
     return proxies
-
-def installGeckoDriver():
-    
-    pass
-
-def setup():
-    if os.name == "nt":
-        if not os.path.exists(FIREFOX_BINARY_LOCATION):
-            print("You need to install firefox")
-            exit()
-        
-        if not os.path.exists(GECKODRIVER_LOCATION):
-            installGeckoDriver()
 
 
 def getPing():
@@ -551,16 +554,42 @@ def getPing():
     if os.name == "nt":
         data = check_output("ping www.instagram.com -n 10 ", shell=True).decode().split("\r\n")
         results = data[-2]
-        # print(results)
+        
         if "Average = " in results:
             avg = int(results[results.find("Average = ") + len("Average = "):-2]) * 2
-            # print(avg)
-
             ping = avg
+        
     return ping
-    
 
-def runBot(username, password, proxy = None):
+def testProxy(proxyUrl:str, port:int, protocol = "http", timeout = 2):
+    proxies = {
+        "http":f"{protocol}://{proxyUrl}:{port}"
+    }
+    try:
+        r = rq.get(url="https://example.org", proxies=proxies, timeout=timeout)
+    except rq.exceptions.ReadTimeout:
+        return False
+    except rq.exceptions.Timeout:
+        return False
+    except Exception as e:
+        log(True, f"{protocol}://{proxyUrl}:{port} failed with exception\n{str(e)}.")
+        return False
+    
+    if r.status_code == 200:
+        return True
+    else:
+        return False
+
+
+def fileToList(fileName) -> list[str]:
+    data = []
+    with open(fileName, "r") as f:
+        data = f.read().split("\n")
+        data = [p for p in data if p != "" and ":" in p]
+    return data
+
+
+def runBot(username, password, proxy = None, config = None):
     driver = getDriver(GECKODRIVER_LOCATION, FIREFOX_BINARY_LOCATION, proxy=proxy, headless=True)
 
     viewBot = ViewBot(username=username, password=password, driver = driver, config=config, verbose=True)
@@ -577,28 +606,142 @@ def runBot(username, password, proxy = None):
     
     viewBot.exit()
 
-if __name__ == "__main__":
-    config:Config = None
-    with open("config.json", "r") as f:
-        config:Config = json.load(f)
+def loadConfiguration() -> Config:
+    configuration:Config = {}
 
+    log(True, "Loading config data")
+    parser = configparser.ConfigParser()
+    parser.read(CONFIGURATION_FILE)
+
+    # print(parser.sections())
+    # Reading configuration settings
+    for section in parser.sections():
+        keys = list(parser[section])
+        for key in keys:
+            val =  parser[section][key]
+            if ',' in val:
+                dataList = [v.strip() for v in val.split(",") if v != ""]
+                configuration[key] = dataList
+                continue
+            try:
+                configuration[key] = literal_eval(val.replace('true', "True").replace('false', 'False'))
+            except ValueError:
+                # print(val)
+                configuration[key] = val
+
+    with open(ACCOUNT_CREDENTIALS_FILE, "r") as f:
+        data = f.read().split("\n\n")
+        data = [d for d in data if d != "" and "username" in d]
+        accounts = []
+
+        for d in data:
+            account = [l.strip().split("=")[1] for l in d.split("\n") if l != "" and "=" in l]
+            accounts.append({
+                "username":account[0],
+                "password":account[1]
+            })
+
+        configuration["accounts"] = accounts
+    log(True, "Loaded config data.")
+
+    log(True, "Loading proxies")
+    configuration["proxies"] = fileToList(PROXIES_FILE)
+    configuration["usersToShareTo"] = fileToList(USERS_TO_SHARE_TO_FILE)
+    httpProxies = map(lambda x: "http://" + x, fileToList(HTTP_PROXIES_FILE))
+    socks4Proxies = map(lambda x: "socks4://" + x, fileToList(SOCKS4_PROXIES_FILE))
+    socks5Proxies = map(lambda x: "socks5://" + x, fileToList(SOCKS5_PROXIES_FILE))
     
-    proxies = config["proxies"]
-    while len(proxies) == 0:
-        try:
-            proxies = getFreeProxies()
-        except rq.exceptions.SSLError as e:
-            log(True, f"The free proxies site is blocked on your network.\n{str(e)}")
-            break
-    proxiesInUse = []
+    configuration["proxies"].extend(httpProxies)
+    configuration["proxies"].extend(socks4Proxies)
+    configuration["proxies"].extend(socks5Proxies)
 
-    for i in range(1):
-        for account in config["accounts"]:
+    configuration["proxies"] = list(set(configuration["proxies"]))
+
+    proxyData = None
+    with open(FIXED_PROXIES_FILE, "r") as f:
+        proxyData = json.load(f)
+    
+    log(True, "Loaded proxies.")
+    usedProxies = []
+    unusedProxies = []
+    badProxies = []
+
+    log(True, "Testing proxies.")
+    for proxy in configuration["proxies"]:
+        protocol, ipport = proxy.split("://")
+        ip, port = ipport.split(":")
+        isActive = testProxy(ip, port, protocol)
+        log(True, f"Testing proxy {proxy}")
+        if isActive:
+            if proxy in proxyData["usedProxies"]:
+                usedProxies.append(proxy)
+            else:
+                unusedProxies.append(proxy)
+        else:
+            log(True, f"{proxy} is not working")
+            badProxies.append(proxy)
+
+
+    for account in configuration["accounts"]:
+        # Update proxy statuses.
+        if account["username"] in proxyData:
+            # Account has a proxy associated to it.
+            usedProxy = proxyData[account["username"]]
+
+            if usedProxy in badProxies:
+                usedProxies.remove(usedProxy)
+                del proxyData[account["username"]]
+                continue
+
+            if not usedProxy in usedProxies:
+                usedProxies.append(usedProxy)
+            
+            if usedProxy in unusedProxies:
+                unusedProxies.remove(usedProxy)
+
+        else:
+            # Account does not have a proxy associated to it.
+            if len(unusedProxies) != 0:
+                newProxy = unusedProxies.pop()
+                proxyData[account["username"]] = newProxy
+            else:
+                pass
+    proxyData["usedProxies"] = usedProxies
+    with open(FIXED_PROXIES_FILE, "w") as f:
+        json.dump(proxyData, f)
+
+    with open(PROXIES_FILE, "w") as f:
+        f.write(
+            "\n".join(configuration["proxies"])
+        )
+
+    for account in configuration["accounts"]:
+        if account["username"] in proxyData:
+            account["proxy"] = proxyData[account["username"]]
+        else:
+            account["proxy"] = ""
+    configuration["proxyData"] = proxyData
+    return configuration
+
+
+if __name__ == "__main__":
+    configuration:Config = None
+    configuration = loadConfiguration()
+    proxies = configuration["proxies"]
+    pprint(configuration)
+
+    runOnce = True
+    log(True, "Started bot.")
+    while True:
+        for account in configuration["accounts"]:
             proxy = None
-            if len(proxies) != 0 and config["useProxy"]:
-                proxy = choice(proxies)
-                proxiesInUse.append(proxy)
+            if configuration["useProxy"] and "proxy" in account and account["proxy"] != "":
+                proxy = account["proxy"]
 
             log(True, f"Running bot with account {account['username']}")
-            runBot(account["username"], account["password"], proxy)
-        sleep(config["accountInteractionInterval"])
+            runBot(account["username"], account["password"], proxy, config=configuration)
+        
+        if runOnce:
+            break
+        
+        sleep(configuration["accountInteractionInterval"])
