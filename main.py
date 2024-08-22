@@ -5,13 +5,14 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.keys import Keys
-from selenium.common.exceptions import NoSuchElementException, StaleElementReferenceException, TimeoutException
+from selenium.common.exceptions import NoSuchElementException, StaleElementReferenceException, TimeoutException, ElementClickInterceptedException
 from selenium.webdriver.common.proxy import Proxy, ProxyType
 from selenium.webdriver import FirefoxProfile
 
 
 import requests as rq
 import time
+from time import sleep
 import json
 from XPaths import ProfilePage, MainPage, ReelPage
 from time import sleep
@@ -24,36 +25,6 @@ from subprocess import check_output
 import configparser
 from pprint import pprint
 from ast import literal_eval
-
-'''
-{
-    "targetUser":"dailyoriginalmusic",
-    "accountInteractionInterval":5,
-    "reelInteractionInterval":1,
-    "realWatchDuration":3,
-    "like":true,
-    "likeRangeMinimum":0,
-    "likeRangeMaximum":10,
-    "share":true,
-    "shareRangeMinimum":0,
-    "shareRangeMaximum":10,
-    "comment":true,
-    "commentRangeMinimum":0,
-    "commentRangeMaximum":10,
-    "search":true,
-    "maxNumberOfReelsToWatch":30,
-    "specificReelIDsToWatch": [],
-    "usersToShareTo":[],
-    "proxies":[
-
-    ],
-    "accounts":[
-        {
-            "username":"bruhhhhhhhh786",
-            "password":"otaku$123"
-        }
-    ]
-}'''
 
 class Account(TypedDict):
     username:str
@@ -81,6 +52,7 @@ class Config(TypedDict):
     proxies: list[str]
     accounts: list[Account]
     useProxy:bool
+    specificReelIDsToNotWatch:list[str]
 
 LOG_FILE = "logs.txt"
 COMMENTS_FILE = "comments.txt"
@@ -99,8 +71,8 @@ FIXED_PROXIES_FILE = "fixedProxies.json" # Accounts with their associated proxie
 GECKODRIVER_WINDOWS_LINK = "https://github.com/mozilla/geckodriver/releases/download/v0.34.0/geckodriver-v0.34.0-win32.zip"
 GECKODRIVER_LINUX_LINK = "https://github.com/mozilla/geckodriver/releases/download/v0.34.0/geckodriver-v0.34.0-linux64.tar.gz"
 
-GECKODRIVER_LOCATION = "driver\\geckodriver.exe"
-FIREFOX_BINARY_LOCATION = "firefox\\firefox.exe"
+GECKODRIVER_LOCATION = "./driver/geckodriver.exe"
+FIREFOX_BINARY_LOCATION = "./firefox/firefox.exe"
 
 
 
@@ -172,37 +144,70 @@ class ViewBot:
             log(self.verbose, "Login details sent. Waiting for login")
             
             
+
+            sleep(2)
             # Wait until the main page loads by checking for an element that appears on the main page
-            try:
-                WebDriverWait(self.driver, self.standardWait).until(
-                    EC.presence_of_element_located((By.XPATH, MainPage["saveLoginNotNowButton"]))
-                )
-            except NoSuchElementException:
+            if "accounts/onetap" in self.driver.current_url:
+                log(self.verbose, f"Got the save login notification, reloading page. Current url = {self.driver.current_url}")
+                self.driver.get(self.instaBaseURL)
+            
+            if "/accounts/suspended/" in self.driver.current_url:
+                log(self.verbose, f"Account {self.username} is suspended. Returning to instagram, without logging in.")
+                self.driver.delete_all_cookies()
+                self.driver.get(self.instaBaseURL)
+                return False
+
+            if "challenge" in self.driver.current_url:
                 try:
-                    suspiciousBehavourButton = self.driver.find_element(By.XPATH, MainPage["suspectedBehaviour"])
-                    suspiciousBehavourButton.click()
-                except Exception as e:
-                    log(self.verbose, str(e))
-                    return False
-            log(self.verbose, "Login successful")
+                    WebDriverWait(self.driver, 10).until(
+                        EC.presence_of_element_located((By.XPATH, MainPage["suspectedBehaviour"]))
+                    )
 
-            notNowButton = self.driver.find_element(By.XPATH, MainPage["saveLoginNotNowButton"])
-            notNowButton.click()
+                    susBehaviourButton = self.driver.find_element(By.XPATH, MainPage["suspectedBehaviour"])
+                    susBehaviourButton.click()
+                except NoSuchElementException:
+                    log(self.verbose, "Not suspected behaviour.")
+                except TimeoutException:
+                    log(self.verbose, "Not suspected behaviour.")
 
-            
+                try:
+                    WebDriverWait(self.driver, 10).until(
+                        EC.presence_of_element_located((By.XPATH, "//*[text()='Dismiss']"))
+                    )
+
+                    susLoginButton = self.driver.find_element(By.XPATH, "//*[text()='Dismiss']")
+                    susLoginButton.click()
+                except NoSuchElementException:
+                    log(self.verbose, "Not suspected login.")
+                except TimeoutException:
+                    log(self.verbose, "Not suspected login.")
+
+                
+            sleep(2)
             try:
-                WebDriverWait(self.driver, self.standardWait).until(
-                    EC.presence_of_element_located((By.XPATH, MainPage["notificationNotNowButton"]))
+                WebDriverWait(self.driver, 10).until(
+                    EC.presence_of_element_located((By.XPATH, MainPage["username"]))
                 )
             except NoSuchElementException:
-                log(self.verbose, "Did not get notification message")
-        
-            log(self.verbose, "Login successful. Passed notifications alert.")
+                log(self.verbose, "Could not login, did not detect username.")
+                self.isLoggedIn = False
+                if self.driver.get_cookie("sessionid") != None:
+                    self.isLoggedIn = True
+                    log(self.verbose, "Login somehow succeeded.")
+                    return True
+                return False
+            except TimeoutException:
+                log(self.verbose, "Could not login, did not detect username.")
+                self.isLoggedIn = False
+                if self.driver.get_cookie("sessionid") != None:
+                    self.isLoggedIn = True
+                    log(self.verbose, "Login somehow succeeded.")
+                    self.driver.get(self.instaBaseURL)
+                    return True
+                return False
 
-            notNowButton = self.driver.find_element(By.XPATH, MainPage["notificationNotNowButton"])
-            notNowButton.click()
             
-
+            log(self.verbose, "Login successful")
             self.isLoggedIn = True            
             return True
 
@@ -265,6 +270,11 @@ class ViewBot:
 
             return True
 
+        except ElementClickInterceptedException:
+            log(self.driver, "Refreshing page because some popup appeared.")
+            self.driver.get(self.instaBaseURL)
+            self.searchAndNavigateToTargetUser()
+
         except Exception as e:
             log(self.verbose, f"An error occurred during search: {e}")
             return False
@@ -298,7 +308,7 @@ class ViewBot:
         last_height = self.driver.execute_script("return document.body.scrollHeight")
         while len(elements) <= self.config["maxNumberOfReelsToWatch"]:
             self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(2)
+            sleep(2)
             new_height = self.driver.execute_script("return document.body.scrollHeight")
             
             reels = reelsContainer.find_elements(By.TAG_NAME, "a")
@@ -317,7 +327,8 @@ class ViewBot:
 
         elements = [e for e in elements if "https://www.instagram.com/reel/" in e]
         self.foundReels = elements[::]
-        
+        if self.config["specificReelIDsToNotWatch"] and len(self.config["specificReelIDsToNotWatch"]) > 0:
+            self.foundReels = [reel for reel in self.foundReels if not reel in self.config["specificReelIDsToNotWatch"]]
         return elements
 
     def generateRandomComment(self):
@@ -344,11 +355,11 @@ class ViewBot:
 
     def randomlyInteractWithReels(self):
         shuffle(self.foundReels)
-
-        for customReelID in self.config["specificReelIDsToWatch"]:
-            if not any([customReelID in link for link in self.foundReels]):
-                self.foundReels.append(f"{self.instaBaseURL}reel/{customReelID}/")
-                self.foundReels.pop(0)
+        if self.config["specificReelIDsToWatch"]:
+            for customReelID in self.config["specificReelIDsToWatch"]:
+                if not any([customReelID in link for link in self.foundReels]):
+                    self.foundReels.append(f"{self.instaBaseURL}reel/{customReelID}/")
+                    self.foundReels.pop(0)
 
         likeCount = randint(self.config["likeRangeMinimum"], self.config["likeRangeMinimum"])
         commentCount = randint(self.config["commentRangeMinimum"], self.config["commentRangeMinimum"])
@@ -364,7 +375,7 @@ class ViewBot:
 
         for i, reelLink in enumerate(self.foundReels):
             self.driver.get(reelLink)
-            self.driver.implicitly_wait(self.config["realWatchDuration"])
+            sleep(self.config["realWatchDuration"])
 
             self.currentReelID = reelLink
 
@@ -383,18 +394,27 @@ class ViewBot:
 
             
             if self.config["like"] and likeOrNot[i] == 1:
-                self.driver.implicitly_wait(self.config["individualInteractionInterval"])
+                sleep(self.config["individualInteractionInterval"])
                 self.likeReel()
+            else:
+                log(self.verbose, f"Not liking reel. (Is Logged in = {self.isLoggedIn}). {likeOrNot} {i}")
+            
             
             if self.config["comment"] and commentOrNot[i] == 1:
-                self.driver.implicitly_wait(self.config["individualInteractionInterval"])
+                sleep(self.config["individualInteractionInterval"])
                 self.commentOnReel(self.generateRandomComment())
+            else:
+                log(self.verbose, f"Not commenting on reel. (Is Logged in = {self.isLoggedIn}). {commentOrNot} {i}")
+            
 
             if self.config["share"] and shareOrNot[i] == 1:
-                self.driver.implicitly_wait(self.config["individualInteractionInterval"])
+                sleep(self.config["individualInteractionInterval"])
                 self.shareReel(self.config["usersToShareTo"])
+            else:
+                log(self.verbose, f"Not sharing reel. (Is Logged in = {self.isLoggedIn}). {shareOrNot} {i}")
             
-            self.driver.implicitly_wait(self.config["reelInteractionInterval"])
+            
+            sleep(self.config["reelInteractionInterval"])
 
             
 
@@ -448,7 +468,7 @@ class ViewBot:
             shareButton = self.driver.find_element(By.XPATH, ReelPage["shareButton"])
             shareButton.click()
         except NoSuchElementException:
-            log("Did not get the share button.")
+            log(self.verbose, "Did not get the share button.")
             return
         
         try:
@@ -537,8 +557,10 @@ def getDriver(executablePath, firefoxPath, proxy = None, headless = False):
         options.set_preference("network.proxy.type", 1)
         options.set_preference("network.proxy.http", proxy.split(":")[0])
         options.set_preference("network.proxy.http_port", proxy.split(":")[1])
+        options.set_preference("dom.webnotifications.enabled", False)
 
     driver = webdriver.Firefox(service=s, options=options)
+
     return driver
 
 def getFreeProxies():
@@ -599,10 +621,18 @@ def runBot(username, password, proxy = None, config = None):
     viewBot.searchAndNavigateToTargetUser()
     
     viewBot.listReels()
+
+    if len(viewBot.foundReels) > 0:
+        viewBot.randomlyInteractWithReels()
+    else:
+        log(True, "No reels found")
+        return
+
     
-    viewBot.randomlyInteractWithReels()
-    
-    viewBot.followUser(config["targetUser"])
+    if viewBot.isLoggedIn:
+        viewBot.followUser(config["targetUser"])
+    else:
+        log(True, "Could not follow the user, since we arent logged in.")
     
     viewBot.exit()
 
@@ -610,7 +640,9 @@ def loadConfiguration() -> Config:
     configuration:Config = {}
 
     log(True, "Loading config data")
-    parser = configparser.ConfigParser()
+    parser = configparser.RawConfigParser()
+
+    parser.optionxform = lambda option: option
     parser.read(CONFIGURATION_FILE)
 
     # print(parser.sections())
@@ -619,6 +651,8 @@ def loadConfiguration() -> Config:
         keys = list(parser[section])
         for key in keys:
             val =  parser[section][key]
+            if "NONE" in val.upper():
+                configuration[key] = []
             if ',' in val:
                 dataList = [v.strip() for v in val.split(",") if v != ""]
                 configuration[key] = dataList
@@ -670,8 +704,12 @@ def loadConfiguration() -> Config:
     for proxy in configuration["proxies"]:
         protocol, ipport = proxy.split("://")
         ip, port = ipport.split(":")
-        isActive = testProxy(ip, port, protocol)
-        log(True, f"Testing proxy {proxy}")
+        if configuration["useProxy"]:
+            isActive = testProxy(ip, port, protocol)
+            log(True, f"Testing proxy {proxy}")
+        else:
+            isActive = True
+            log(True, f"Not Testing proxy {proxy} since useProxy is set to False.")
         if isActive:
             if proxy in proxyData["usedProxies"]:
                 usedProxies.append(proxy)
@@ -689,7 +727,8 @@ def loadConfiguration() -> Config:
             usedProxy = proxyData[account["username"]]
 
             if usedProxy in badProxies:
-                usedProxies.remove(usedProxy)
+                if usedProxy in usedProxies:
+                    usedProxies.remove(usedProxy)
                 del proxyData[account["username"]]
                 continue
 
